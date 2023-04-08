@@ -14,7 +14,7 @@
 #include <unistd.h>
 #include <errno.h>
 
-#define SEM_NAME_MUTEX "/mutex"
+#define SEM_NAME_MUTEX ".mutex"
 #define SHM_MON_COMPR "/shm_monitor_comprobante"
 
 #endif
