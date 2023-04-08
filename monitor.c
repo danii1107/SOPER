@@ -21,12 +21,6 @@ int main(int argc, char **argv)
         exit(EXIT_SUCCESS);
     }
 
-    if ((mutex = sem_open(SEM_NAME_MUTEX, O_CREAT | O_EXCL, S_IRUSR | S_IWUSR, 1)) == SEM_FAILED)
-    {
-        perror("sem_open");
-        exit(EXIT_FAILURE);
-    }
-
     pid_principal = getpid();
 
     pid = fork();
@@ -36,43 +30,55 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
+    if ((mutex = sem_open(SEM_NAME_MUTEX, O_CREAT | O_RDWR , S_IRWXU, 1)) == SEM_FAILED)
+    {
+        perror("sem_open");
+        exit(EXIT_FAILURE);
+    }
+
     sem_wait(mutex);
-    /* REGIÓN CRÍTICA */
-    fd_shm_mon_compr = shm_open(SHM_MON_COMPR, O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
-    
+    /* SECCIÓN CRÍTICA */
+    fd_shm_mon_compr = shm_open(SHM_MON_COMPR, O_CREAT | O_EXCL, 0200);
     if (fd_shm_mon_compr == -1 && errno == EEXIST)
     {
         /* MONITOR */
-        if (getpid() == pid_principal)
-        {
-            wait(NULL);
-        }
+        sem_post(mutex);
         fflush(stdout);
         printf("soy monitor\n");
+        sem_wait(mutex);
+        if(pid_principal == getpid()) wait(NULL);
+        close(fd_shm_mon_compr);
+        sem_close(mutex);
+        sem_unlink( SEM_NAME_MUTEX );
+        shm_unlink( SHM_MON_COMPR );
         exit(EXIT_SUCCESS);
     }
     else if (fd_shm_mon_compr != -1)
     {
         /* COMPROBADOR */
-        if (getpid() == pid_principal)
-        {
-            wait(NULL);
-        }
         fflush(stdout);
         printf("soy comprobador\n");
+        sem_post(mutex);
+        if(pid_principal == getpid()) wait(NULL);
+        close(fd_shm_mon_compr);
+        sem_close(mutex);
+        sem_unlink( SEM_NAME_MUTEX );
+        shm_unlink( SHM_MON_COMPR );
         exit(EXIT_SUCCESS);
     }
     else
     {
+        sem_close(mutex);
+        sem_unlink( SEM_NAME_MUTEX );
         if (getpid() == pid_principal)
         {
             wait(NULL);
-            exit(EXIT_FAILURE);
         }
         perror("Error creating the shared memory segment\n");
         exit(EXIT_FAILURE);
     }
-    sem_post(mutex);
+    /* FIN SECCIÓN CRÍTICA */
+    sem_post(mutex); 
 
     sem_close(mutex);
     sem_unlink( SEM_NAME_MUTEX );
