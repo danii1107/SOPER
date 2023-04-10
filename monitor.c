@@ -4,9 +4,9 @@ int main(int argc, char **argv)
 {
     int lag = 0;
     int fd_shm_mon_compr;
-    pid_t pid = -1;
-    pid_t pid_principal;
+    int i = 1;
     sem_t *mutex = NULL;
+    sem_t *waitBothProcs = NULL;
 
     if (argc != 2)
     {
@@ -21,16 +21,13 @@ int main(int argc, char **argv)
         exit(EXIT_SUCCESS);
     }
 
-    pid_principal = getpid();
-
-    pid = fork();
-    if (pid < 0)
+    if ((mutex = sem_open(SEM_NAME_MUTEX, O_CREAT | O_RDWR , S_IRWXU, 1)) == SEM_FAILED)
     {
-        perror("fork");
+        perror("sem_open");
         exit(EXIT_FAILURE);
     }
 
-    if ((mutex = sem_open(SEM_NAME_MUTEX, O_CREAT | O_RDWR , S_IRWXU, 1)) == SEM_FAILED)
+    if ((waitBothProcs = sem_open(SEM_NAME_WAIT, O_CREAT | O_RDWR , S_IRWXU, 0)) == SEM_FAILED)
     {
         perror("sem_open");
         exit(EXIT_FAILURE);
@@ -38,48 +35,67 @@ int main(int argc, char **argv)
 
     sem_wait(mutex);
     /* SECCIÓN CRÍTICA */
-    fd_shm_mon_compr = shm_open(SHM_MON_COMPR, O_CREAT | O_EXCL, 0200);
+    fd_shm_mon_compr = shm_open(SHM_MON_COMPR, O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
     if (fd_shm_mon_compr == -1 && errno == EEXIST)
     {
         /* MONITOR */
         sem_post(mutex);
         fflush(stdout);
-        printf("soy monitor\n");
-        sem_wait(mutex);
-        if(pid_principal == getpid()) wait(NULL);
+        printf("MONITOR\n");
+        /* PERMITE A COMPROBADOR TERMINAR */
+        sem_post(waitBothProcs);
+
+
+       
         close(fd_shm_mon_compr);
+        shm_unlink( SHM_MON_COMPR );
+        sem_close(waitBothProcs);
+        sem_unlink( SEM_NAME_WAIT );
         sem_close(mutex);
         sem_unlink( SEM_NAME_MUTEX );
-        shm_unlink( SHM_MON_COMPR );
+       
         exit(EXIT_SUCCESS);
     }
     else if (fd_shm_mon_compr != -1)
     {
         /* COMPROBADOR */
         fflush(stdout);
-        printf("soy comprobador\n");
+        printf("COMPROBADOR\n");
         sem_post(mutex);
-        if(pid_principal == getpid()) wait(NULL);
+        /* ESPERA A QUE MONITOR ACABE */
+        sem_wait(waitBothProcs);
+
+        i = 1;
+        while(i != 25 /* BLOQUE NO SEA BLOQUE DE FINALIZACIÓN */)
+        {
+            /* RECIBIR BLOQUE COLA DE MENSAJES */
+            /* COMPROBAR BLOQUE */
+            i++;
+        }
+        
         close(fd_shm_mon_compr);
+        shm_unlink( SHM_MON_COMPR );
+        sem_close(waitBothProcs);
+        sem_unlink( SEM_NAME_WAIT );
         sem_close(mutex);
         sem_unlink( SEM_NAME_MUTEX );
-        shm_unlink( SHM_MON_COMPR );
+        
         exit(EXIT_SUCCESS);
     }
     else
     {
+        sem_close(waitBothProcs);
+        sem_unlink( SEM_NAME_WAIT );
         sem_close(mutex);
         sem_unlink( SEM_NAME_MUTEX );
-        if (getpid() == pid_principal)
-        {
-            wait(NULL);
-        }
         perror("Error creating the shared memory segment\n");
         exit(EXIT_FAILURE);
     }
     /* FIN SECCIÓN CRÍTICA */
     sem_post(mutex); 
 
+    sem_close(waitBothProcs);
+    sem_unlink( SEM_NAME_WAIT );
     sem_close(mutex);
     sem_unlink( SEM_NAME_MUTEX );
     close(fd_shm_mon_compr);
