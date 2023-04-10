@@ -18,8 +18,5 @@ clear:
 clean:
 	rm -rf *.o $(EJS)
 
-run:
-	./monitor 500
-
 runv:
 	valgrind --leak-check=full --track-origins=yes ./monitor 500
