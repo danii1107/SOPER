@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -g -Wall -pedantic -lrt
 EJS = monitor
 OBJECTS= monitor.o
-SEG_FAULT = -fsanitize=address -g3
+#SEG_FAULT = -fsanitize=address -g3
 
 all: $(EJS) clear
 
