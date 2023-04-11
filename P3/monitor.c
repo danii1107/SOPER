@@ -1,12 +1,9 @@
 #include "monitor.h"
 
-int solutionStatus = 1;                 /* VARIABLE GLOBAL PARA COMPROBAR LA SOLUCIÓN DEL MINERO */
-int i = 0;                              /* INDEXACIÓN GLOBAL */
-
 int main(int argc, char **argv)
 {
     int lag = 0;                        /* RETARDO PASADO POR PARÁMETRO */
-    int j = 0;                          /* INDEXACIÓN */    
+    int i, j = 0;                       /* INDEXACIÓN */    
     int fd_shm_mon_compr;               /* DESCRIPTOR PARA COMPROBADOR-MONITOR */
     int fd_mon;                         /* DESCRIPTOR PARA EL MONITOR */
     CompleteShMem *info_shm = NULL;     /* EdD ALMACENA SEMÁFOROS Y MQ */
@@ -15,7 +12,7 @@ int main(int argc, char **argv)
     /* shm_unlink( SHM_MON_COMPR );
     sem_close(mutex);
     sem_unlink( SEM_NAME_MUTEX );
-    exit(EXIT_SUCCESS); */
+    exit(EXIT_SUCCESS);  */
 
     /* CONTROL DE ERRORES DE PARÁMETRO */
     if (argc != 2)
@@ -76,12 +73,12 @@ int main(int argc, char **argv)
             /* CONSUMIDOR */
             sem_wait(&info_shm->sem_fill);
             sem_wait(&info_shm->sem_mutex);
-            if (solutionStatus == 1) printf("Solution accepted: %08ld --> %08ld\n", info_shm->data[i].target, info_shm->data[i].solution);
-            else printf("Solution rejected: %08ld !-> %08ld\n", info_shm->data[i].target, info_shm->data[i].solution);
-            i--;
-            usleep(lag);
+            if (info_shm->solutionStatus == 1) printf("Solution accepted: %08ld --> %08ld\n", info_shm->data[info_shm->front].target, info_shm->data[info_shm->front].solution);
+            else printf("Solution rejected: %08ld !-> %08ld\n", info_shm->data[info_shm->front].target, info_shm->data[info_shm->front].solution);
+            info_shm->front = (info_shm->front + 1) % BUFF_SIZE;
             sem_post(&info_shm->sem_mutex);
             sem_post(&info_shm->sem_empty);
+            usleep(lag);
         }
 
         munmap(info_shm, sizeof(CompleteShMem));
@@ -126,7 +123,7 @@ int main(int argc, char **argv)
             sem_unlink( SEM_NAME_MUTEX );
             exit(EXIT_FAILURE);
         }
-        if (sem_init(&info_shm->sem_empty, 1, MQ_SIZE))
+        if (sem_init(&info_shm->sem_empty, 1, BUFF_SIZE))
         {
             munmap(info_shm, sizeof(CompleteShMem));
             sem_destroy(&info_shm->sem_mutex);
@@ -147,25 +144,29 @@ int main(int argc, char **argv)
         }
 
         /* INICIALIZACIÓN DEL TARGET Y SOLUCIÓN DE LA ESTRUCTURA */
-        for(j = 0; j < MQ_SIZE; j++)
+        for(j = 0; j < BUFF_SIZE; j++)
         {
             info_shm->data[j].target = 0;
             info_shm->data[j].solution = 0;
         }
 
+        info_shm->solutionStatus = 1;
+        info_shm->front = info_shm->rear = 0;
         i = 0;
         while(1 /* != BLOQUE FINALIZACION DE LET/ESCR */)
         {
             /* PRODUCTOR */
             sem_wait(&info_shm->sem_empty);
             sem_wait(&info_shm->sem_mutex);
-            info_shm->data[i].target = i;
-            info_shm->data[i].solution = i+1;
-            /* COMPROBAR SOLUCION, BIEN = 1, MAL = 0 */
+            /* EXTRAER DE LA COLA DE MENSAJES MINERO */
+            info_shm->solutionStatus = 1; /* COMPROBAR SOLUCION, BIEN = 1, MAL = 0 */
+            info_shm->data[info_shm->rear].target = i;
+            info_shm->data[info_shm->rear].solution = i+1;
+            info_shm->rear = (info_shm->rear + 1) % BUFF_SIZE;
             i++;
-            usleep(lag);
             sem_post(&info_shm->sem_mutex);
             sem_post(&info_shm->sem_fill);
+            usleep(lag);
         }
 
         /* "LIBERACIÓN" DEL MAPEO DE LA MEMORIA */
