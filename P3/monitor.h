@@ -16,7 +16,7 @@
 
 #define SEM_NAME_MUTEX ".mutex"                     /* NOMBRE DEL ARCHIVO TEMPORAL PARA EL SEMÁFORO DE EXCLUSIÓN MUTUA */
 #define SHM_MON_COMPR "/shm_monitor_comprobante"    /* NOMBRE DEL SEGMENTO DE MEMORIA COMPARTIDA ENTRE COMPROBADOR-MONITOR */
-#define MQ_SIZE 6                                   /* TAMAÑO DE LA COLA DE MENSAJES */
+#define BUFF_SIZE 6                                 /* TAMAÑO DEL BUFFER */
 
 typedef struct {
     long target;
@@ -24,7 +24,10 @@ typedef struct {
 } ShmData;
 
 typedef struct {
-    ShmData data[MQ_SIZE];
+    int front;
+    int rear;
+    int solutionStatus;
+    ShmData data[BUFF_SIZE];
     sem_t sem_mutex;
     sem_t sem_empty;
     sem_t sem_fill;
