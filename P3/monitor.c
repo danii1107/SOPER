@@ -68,7 +68,7 @@ int main(int argc, char **argv)
             exit(EXIT_FAILURE);
         }
 
-        while (1/* NO LEA BLOQUE DE FINALIZACIÓN */)
+        while (info_shm->solutionStatus == 1 /* NO LEA BLOQUE DE FINALIZACIÓN */)
         {
             /* CONSUMIDOR */
             sem_wait(&info_shm->sem_fill);
@@ -78,7 +78,7 @@ int main(int argc, char **argv)
             info_shm->front = (info_shm->front + 1) % BUFF_SIZE;
             sem_post(&info_shm->sem_mutex);
             sem_post(&info_shm->sem_empty);
-            usleep(lag);
+            usleep(lag*1000);
         }
 
         munmap(info_shm, sizeof(CompleteShMem));
@@ -153,7 +153,7 @@ int main(int argc, char **argv)
         info_shm->solutionStatus = 1;
         info_shm->front = info_shm->rear = 0;
         i = 0;
-        while(1 /* != BLOQUE FINALIZACION DE LET/ESCR */)
+        while(info_shm->solutionStatus == 1 /* != BLOQUE FINALIZACION DE LET/ESCR */)
         {
             /* PRODUCTOR */
             sem_wait(&info_shm->sem_empty);
@@ -164,9 +164,10 @@ int main(int argc, char **argv)
             info_shm->data[info_shm->rear].solution = i+1;
             info_shm->rear = (info_shm->rear + 1) % BUFF_SIZE;
             i++;
+            if(i == 15) info_shm->solutionStatus = 0;
             sem_post(&info_shm->sem_mutex);
             sem_post(&info_shm->sem_fill);
-            usleep(lag);
+            usleep(lag*1000);
         }
 
         /* "LIBERACIÓN" DEL MAPEO DE LA MEMORIA */
