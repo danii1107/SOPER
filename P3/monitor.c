@@ -184,6 +184,10 @@ int main(int argc, char **argv)
             exit(EXIT_FAILURE);
         }
         
+        /* INICIALIZACIÓN DE LA EdD ShmData ANTES DEL SALTO CONDICIONAL */
+        recieved_info.target = 0;
+        recieved_info.solution = 0;
+        
         while(recieved_info.target != -1 && recieved_info.solution != -1 /* BLOQUE FINALIZACION DE LECT/ESCR */)
         {
             /* PRODUCTOR */
