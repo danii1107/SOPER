@@ -97,6 +97,11 @@ int main(int argc, char **argv)
 
         fflush(stdout);
         printf("[%d] Finishing\n", getpid());
+        
+        close(fd_shm_mon_compr);
+        shm_unlink( SHM_MON_COMPR );
+        sem_close(mutex);
+        sem_unlink( SEM_NAME_MUTEX );
 
         exit(EXIT_SUCCESS);
     }
