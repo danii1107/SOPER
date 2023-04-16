@@ -140,8 +140,8 @@ int main(int argc, char **argv)
         }
         if (sem_init(&info_shm->sem_empty, 1, BUFF_SIZE))
         {
-            munmap(info_shm, sizeof(CompleteShMem));
             sem_destroy(&info_shm->sem_mutex);
+            munmap(info_shm, sizeof(CompleteShMem));
             shm_unlink( SHM_MON_COMPR );
             sem_close(mutex);
             sem_unlink( SEM_NAME_MUTEX );
@@ -149,9 +149,9 @@ int main(int argc, char **argv)
         }
         if (sem_init(&info_shm->sem_fill, 1, 0))
         {
-            munmap(info_shm, sizeof(CompleteShMem));
             sem_destroy(&info_shm->sem_mutex);
             sem_destroy(&info_shm->sem_empty);
+            munmap(info_shm, sizeof(CompleteShMem));
             shm_unlink( SHM_MON_COMPR );
             sem_close(mutex);
             sem_unlink( SEM_NAME_MUTEX );
@@ -173,10 +173,10 @@ int main(int argc, char **argv)
         mq = mq_open( MQ_NAME , O_CREAT | O_RDONLY, S_IRUSR | S_IWUSR, &attributes);
         if (mq == (mqd_t) - 1)
         {
-            munmap(info_shm, sizeof(CompleteShMem));
             sem_destroy(&info_shm->sem_mutex);
             sem_destroy(&info_shm->sem_empty);
             sem_destroy(&info_shm->sem_fill);
+            munmap(info_shm, sizeof(CompleteShMem));
             shm_unlink( SHM_MON_COMPR );
             sem_close(mutex);
             sem_unlink( SEM_NAME_MUTEX );
@@ -193,10 +193,10 @@ int main(int argc, char **argv)
             /* EXTRAER DE LA COLA DE MENSAJES MINERO */
             if (mq_receive(mq, (char *) &recieved_info, sizeof(ShmData), NULL) == -1)
             {
-                munmap(info_shm, sizeof(CompleteShMem));
                 sem_destroy(&info_shm->sem_mutex);
                 sem_destroy(&info_shm->sem_empty);
                 sem_destroy(&info_shm->sem_fill);
+                munmap(info_shm, sizeof(CompleteShMem));
                 shm_unlink( SHM_MON_COMPR );
                 sem_close(mutex);
                 sem_unlink( SEM_NAME_MUTEX );
@@ -223,6 +223,11 @@ int main(int argc, char **argv)
             /* ESPERA ACTIVA DE <LAG> MILISEGUNDOS */
             usleep(lag*1000);
         }
+
+        /* LIBERAR LOS SEMÁFOROS ANÓNIMOS DE LA MEMORIA COMPARTIDA */
+        sem_destroy(&info_shm->sem_mutex);
+        sem_destroy(&info_shm->sem_empty);
+        sem_destroy(&info_shm->sem_fill);
 
         /* "LIBERACIÓN" DEL MAPEO DE LA MEMORIA DESDE COMPROBADOR */
         munmap(info_shm, sizeof(CompleteShMem));
@@ -251,6 +256,10 @@ int main(int argc, char **argv)
     }
 
     /* NUNCA SE DEBERÍA LLEGAR AQUÍ PERO POR SI HAY FALLOS NO RESPALDADOS SE LIBERAN LOS RECURSOS */
+    sem_destroy(&info_shm->sem_mutex);
+    sem_destroy(&info_shm->sem_empty);
+    sem_destroy(&info_shm->sem_fill);
+    munmap(info_shm, sizeof(CompleteShMem));
     sem_close(mutex);
     sem_unlink( SEM_NAME_MUTEX );
     close(fd_shm_mon_compr);
