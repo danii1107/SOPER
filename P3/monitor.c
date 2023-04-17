@@ -241,9 +241,7 @@ int main(int argc, char **argv)
         /* "LIBERACIÓN" DEL MAPEO DE LA MEMORIA DESDE COMPROBADOR */
         munmap(info_shm, sizeof(CompleteShMem));
 
-        /* LIBERACIÓN DE RECURSOS UTILIZADOS 
-            (SOLO HACE FALTA HACERLO UNA VEZ 
-            YA QUE ES MEMORIA DUPLICADA ENTRE PROCESOS) */
+        /* LIBERACIÓN DE RECURSOS UTILIZADOS POR COMPROBADOR */
         shm_unlink( SHM_MON_COMPR );
         sem_close(mutex);
         sem_unlink( SEM_NAME_MUTEX );
