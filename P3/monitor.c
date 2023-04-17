@@ -43,7 +43,7 @@ int main(int argc, char **argv)
         fflush(stdout);
         printf("[%d] Printing blocks...\n", getpid());
 
-        /* AÈRTURA DEL SEGMENTO DE MEMORIA COMPARTIDA DESDE MONITOR */
+        /* APERTURA DEL SEGMENTO DE MEMORIA COMPARTIDA DESDE MONITOR */
         if ((fd_mon = shm_open(SHM_MON_COMPR, O_RDWR , S_IRUSR | S_IWUSR)) == -1)
         {
             perror("shm_open");
@@ -60,7 +60,6 @@ int main(int argc, char **argv)
         if (info_shm == MAP_FAILED)
         {
             perror("mmap");
-            close(fd_shm_mon_compr);
             shm_unlink( SHM_MON_COMPR );
             sem_close(mutex);
             sem_unlink( SEM_NAME_MUTEX );
@@ -97,8 +96,7 @@ int main(int argc, char **argv)
 
         fflush(stdout);
         printf("[%d] Finishing\n", getpid());
-        
-        close(fd_shm_mon_compr);
+    
         shm_unlink( SHM_MON_COMPR );
         sem_close(mutex);
         sem_unlink( SEM_NAME_MUTEX );
