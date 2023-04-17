@@ -32,7 +32,7 @@ void* solve(void* data)
 /**
  * @brief crea los hilos y les adjudica su intervalo de búsqueda
  *
- * @param obj objetivo del proceso
+ * @param target objetivo del proceso
  * @return 0 si funciona correctamente o 1 si algo da error
  */
 int minero(long target)
