@@ -35,7 +35,8 @@ typedef enum VOTE_TYPES {
 } Votes;
 
 typedef struct {
-    pid_t MinersPIDS[MAX_MINER];    /*!< ALMACENAMIENTO DE LOS PIDS DE LOS MINEROS ACTIVOS */
+    unsigned int minerCount;        /*!< NÚMERO DE MINEROS ACTIVOS */
+    pid_t MinersPIDS[MAX_MINER];    /*!< ALMACENAMIENTO DE LOS PIDS DE LOS MINEROS ACTIVOS */   
     Votes votes[MAX_MINER - 1];     /*!< 0 ó 1 DEPENDIENDO DE SI EL VOTO ES POSITIVO O NEGATIVO */
     Wallet wallets[MAX_MINER];      /*!< CARTERA ASIGNADA A CADA MINERO ACTIVO */
     InfoBlock last_infoBlock;       /*!< ÚLTIMO BLOQUE ALMACENADO */
