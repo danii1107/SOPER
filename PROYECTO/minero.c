@@ -1,7 +1,6 @@
 #include "types.h"
 
 int stop = 0;
-unsigned int minerCount = 0;
 long MinerResult = 0;
 
 /**
@@ -88,9 +87,10 @@ int main(int argc, char **argv)
     int n_threads, exe_seconds;
     int fd[2], pipe_status;
     int fd_shm_miners;
+    int i;
     pid_t pid;
     InfoBlock* info_to_register, *winnerMinerInfo;
-    sem_t* minerCount_mutex, *shmCreation_mutex;
+    sem_t* shmCreation_mutex;
     SystemMemory* sys_info;
 
     if (argc != 3)
@@ -113,54 +113,12 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    /* CREACIÓN E INICIALIZACIÓN A 1 DEL SEMÁFORO MUTEX */
-    if ((minerCount_mutex = sem_open(SEM_NAME_MINER_COUNT, O_CREAT | O_RDWR , S_IRWXU, 1)) == SEM_FAILED)
-    {
-        perror("sem_open");
-        exit(EXIT_FAILURE);
-    }
-
-    if ((shmCreation_mutex = sem_open(SEM_NAME_SHM_CREATION, O_CREAT | O_RDWR , S_IRWXU, 1)) == SEM_FAILED)
-    {
-        sem_close(minerCount_mutex);
-        perror("sem_open");
-        exit(EXIT_FAILURE);
-    }
-
     pipe_status = pipe(fd);
     if(pipe_status == -1)
     {
-        sem_close(minerCount_mutex);
-        sem_close(shmCreation_mutex);
         perror("pipe");
         exit(EXIT_FAILURE);
     }
-
-    sem_wait(shmCreation_mutex);
-    fd_shm_miners = shm_open(SHM_NAME_MINERS, O_CREAT | O_EXCL | O_RDWR, S_IRUSR | S_IWUSR);
-    if (fd_shm_miners == -1 && errno == EEXIST)
-    {
-        /**/
-        sem_post(shmCreation_mutex);
-    } 
-    else if (fd_shm_miners != -1)
-    {
-        /**/
-        sem_post(shmCreation_mutex);
-    }
-    else 
-    {
-        sem_close(minerCount_mutex);
-        sem_close(shmCreation_mutex);
-        close(fd[0]);
-        close(fd[1]);
-        exit(EXIT_FAILURE);
-    }
-
-    sem_wait(minerCount_mutex);
-    
-
-
 
     pid = fork();
     if (pid < 0) {
@@ -181,6 +139,99 @@ int main(int argc, char **argv)
         {
             close(fd[1]);
             perror("read");
+            exit(EXIT_FAILURE);
+        }
+
+        /* CREACIÓN E INICIALIZACIÓN A 1 DEL SEMÁFORO MUTEX */
+        if ((shmCreation_mutex = sem_open(SEM_NAME_SHM_CREATION, O_CREAT | O_RDWR , S_IRWXU, 1)) == SEM_FAILED)
+        {
+            close(fd[1]);
+            perror("sem_open");
+            exit(EXIT_FAILURE);
+        }
+
+        sem_wait(shmCreation_mutex);
+        fd_shm_miners = shm_open(SHM_NAME_MINERS, O_CREAT | O_EXCL | O_RDWR, S_IRUSR | S_IWUSR);
+        if (fd_shm_miners == -1 && errno == EEXIST)
+        {
+            fd_shm_miners = shm_open( SHM_NAME_MINERS, O_RDWR, S_IRUSR | S_IWUSR);
+            if (fd_shm_miners == -1)
+            {
+                close(fd[1]);
+                perror("shm_open");
+                exit(EXIT_FAILURE);
+            }
+
+            sys_info = mmap(NULL, sizeof(SystemMemory), PROT_WRITE | PROT_READ, MAP_SHARED, fd_shm_miners, 0);
+            close(fd_shm_miners); /* SE CIERRA EL DESCRIPTOR PORQUE YA NO NOS HACE FALTA */
+            if (sys_info == MAP_FAILED)
+            {
+                perror("mmap");
+                close(fd[1]);
+                shm_unlink( SHM_NAME_MINERS );
+                sem_close(shmCreation_mutex);
+                sem_unlink( SEM_NAME_SHM_CREATION );
+                exit(EXIT_FAILURE);
+            }
+
+            sem_post(shmCreation_mutex);
+        } 
+        else if (fd_shm_miners != -1)
+        {
+            /* REISZE DEL SEGMENTO DE MEMORIA COMPARTIDA */
+            if (ftruncate(fd_shm_miners, sizeof(SystemMemory)) == -1)
+            {
+                perror("ftruncate");
+                close(fd[1]);
+                shm_unlink( SHM_NAME_MINERS );
+                sem_close(shmCreation_mutex);
+                sem_unlink( SEM_NAME_SHM_CREATION );
+                exit(EXIT_FAILURE);
+            }
+
+            /* MAPEO DE LA MEMORIA COMPARTIDA DESDE MINERO */
+            sys_info = mmap(NULL, sizeof(SystemMemory), PROT_WRITE | PROT_READ, MAP_SHARED, fd_shm_miners, 0);
+            close(fd_shm_miners); /* SE CIERRA EL DESCRIPTOR PORQUE YA NO NOS HACE FALTA */
+            if (sys_info == MAP_FAILED)
+            {
+                perror("mmap");
+                close(fd[1]);
+                shm_unlink( SHM_NAME_MINERS );
+                sem_close(shmCreation_mutex);
+                sem_unlink( SEM_NAME_SHM_CREATION );
+                exit(EXIT_FAILURE);
+            }
+
+            sys_info->minerCount = 0;
+            for(i = 0; i < MAX_MINER; i++)
+            {
+                sys_info->MinersPIDS[i] = (pid_t) 0;
+                sys_info->wallets[i].n_coins = 0;
+                sys_info->wallets[i].MinersWalletPID = (pid_t) 0;
+                if (i != MAX_MINER - 1) sys_info->votes[i] = 0;
+                sys_info->last_infoBlock->ID = 0;
+                sys_info->last_infoBlock->target = INITIAL_TARGET;
+                sys_info->last_infoBlock->solution = 0;
+                sys_info->last_infoBlock->wallets[i].n_coins = 0;
+                sys_info->last_infoBlock->wallets[i].MinersWalletPID = (pid_t) 0;
+                sys_info->last_infoBlock->total_n_votes = 0;
+                sys_info->last_infoBlock->positive_n_votes = 0;
+                sys_info->current_infoBlock->ID = 0;
+                sys_info->current_infoBlock->target = INITIAL_TARGET;
+                sys_info->current_infoBlock->solution = 0;
+                sys_info->current_infoBlock->wallets[i].n_coins = 0;
+                sys_info->current_infoBlock->wallets[i].MinersWalletPID = (pid_t) 0;
+                sys_info->current_infoBlock->total_n_votes = 0;
+                sys_info->current_infoBlock->positive_n_votes = 0;
+            }
+
+            sem_post(shmCreation_mutex);
+        }
+        else 
+        {
+            sem_close(shmCreation_mutex);
+            close(fd[0]);
+            close(fd[1]);
             exit(EXIT_FAILURE);
         }
     }
