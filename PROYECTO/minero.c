@@ -1,6 +1,7 @@
 #include "types.h"
 
 int stop = 0;
+unsigned int minerCount = 0;
 long MinerResult = 0;
 
 /**
@@ -84,9 +85,13 @@ int minero(int n_threads, long target)
 
 int main(int argc, char **argv)
 {  
-    long target = INITIAL_TARGET;
     int n_threads, exe_seconds;
+    int fd[2], pipe_status;
+    int fd_shm_miners;
     pid_t pid;
+    InfoBlock* info_to_register, *winnerMinerInfo;
+    sem_t* minerCount_mutex, *shmCreation_mutex;
+    SystemMemory* sys_info;
 
     if (argc != 3)
     {
@@ -108,14 +113,76 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
+    /* CREACIÓN E INICIALIZACIÓN A 1 DEL SEMÁFORO MUTEX */
+    if ((minerCount_mutex = sem_open(SEM_NAME_MINER_COUNT, O_CREAT | O_RDWR , S_IRWXU, 1)) == SEM_FAILED)
+    {
+        perror("sem_open");
+        exit(EXIT_FAILURE);
+    }
+
+    if ((shmCreation_mutex = sem_open(SEM_NAME_SHM_CREATION, O_CREAT | O_RDWR , S_IRWXU, 1)) == SEM_FAILED)
+    {
+        sem_close(minerCount_mutex);
+        perror("sem_open");
+        exit(EXIT_FAILURE);
+    }
+
+    pipe_status = pipe(fd);
+    if(pipe_status == -1)
+    {
+        sem_close(minerCount_mutex);
+        sem_close(shmCreation_mutex);
+        perror("pipe");
+        exit(EXIT_FAILURE);
+    }
+
+    sem_wait(shmCreation_mutex);
+    fd_shm_miners = shm_open(SHM_NAME_MINERS, O_CREAT | O_EXCL | O_RDWR, S_IRUSR | S_IWUSR);
+    if (fd_shm_miners == -1 && errno == EEXIST)
+    {
+        /**/
+        sem_post(shmCreation_mutex);
+    } 
+    else if (fd_shm_miners != -1)
+    {
+        /**/
+        sem_post(shmCreation_mutex);
+    }
+    else 
+    {
+        sem_close(minerCount_mutex);
+        sem_close(shmCreation_mutex);
+        close(fd[0]);
+        close(fd[1]);
+        exit(EXIT_FAILURE);
+    }
+
+    sem_wait(minerCount_mutex);
+    
+
+
+
     pid = fork();
     if (pid < 0) {
         perror("fork");
         exit(EXIT_FAILURE);
     } else if (pid == 0) {
         /* REGISTRADOR */
+        close(fd[1]);
+        if(read(fd[0], info_to_register, sizeof(InfoBlock)) == -1)
+        {
+            close(fd[0]);
+            perror("read");
+            exit(EXIT_FAILURE);
+        }
     } else {
-        
+        close(fd[0]);
+        if(write(fd[1], winnerMinerInfo, sizeof(InfoBlock)) == -1)
+        {
+            close(fd[1]);
+            perror("read");
+            exit(EXIT_FAILURE);
+        }
     }
 
 }
