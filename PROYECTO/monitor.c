@@ -2,68 +2,121 @@
 
 int main()
 {
-    int j = 0;                          /* INDEXACIÓN */    
-    int fd_shm_mon_compr;               /* DESCRIPTOR PARA COMPROBADOR-MONITOR */
-    int fd_mon;                         /* DESCRIPTOR PARA EL MONITOR */
-    CompleteShMem *info_shm = NULL;     /* EdD ALMACENA SEMÁFOROS Y COLA CIRCULAR COMPROBADOR-MONITOR */
-    ShmData recieved_info;              /* EdD PARA RECIBIR LA INFORMACIÓN ENVIADA POR MINERO A TRAVÉS DE MQ */
-    mqd_t mq;                           /* COLA DE MENSAJES MINERO-COMPROBADOR */
-    sem_t *mutex = NULL;                /* SEMÁFORO EXCLUSIÓN MUTUA */
+    int i = 0, j = 0;                          /* INDEXACIÓN */
+    int fd_shm_mon_compr;                      /* DESCRIPTOR PARA COMPROBADOR-MONITOR */
+    char solutionInfo[10] = "rejected\0";    /* */
+    CompleteShMem *info_shm = NULL;            /* EdD ALMACENA SEMÁFOROS Y COLA CIRCULAR COMPROBADOR-MONITOR */
+    mqd_t mq;                                  /* COLA DE MENSAJES MINERO-COMPROBADOR */
+    InfoBlock recieved_info;                   /* EdD PARA RECIBIR LA INFORMACIÓN ENVIADA POR MINERO A TRAVÉS DE MQ */
+    pid_t pid;
 
-    
-    /* CREACIÓN E INICIALIZACIÓN A 1 DEL SEMÁFORO MUTEX */
-    if ((mutex = sem_open(SEM_NAME_MUTEX, O_CREAT | O_RDWR , S_IRWXU, 1)) == SEM_FAILED)
+    fd_shm_mon_compr = shm_open(SHM_MON_COMPR, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+    if (fd_shm_mon_compr == -1)
     {
-        perror("sem_open");
+        /* CONTROL DE ERRORES AL ABRIR EL SEGMENTO DE MEMORIA COMPARTIDA */
+        perror("Error creating the shared memory segment\n");
+        exit(EXIT_FAILURE);
+    }
+    /* COMPROBADOR */
+
+    /* REISZE DEL SEGMENTO DE MEMORIA COMPARTIDA */
+    if (ftruncate(fd_shm_mon_compr, sizeof(CompleteShMem)) == -1)
+    {
+        perror("ftruncate");
+        close(fd_shm_mon_compr);
+        shm_unlink(SHM_MON_COMPR);
         exit(EXIT_FAILURE);
     }
 
-    sem_wait(mutex);
-    /* SECCIÓN CRÍTICA */
-    fd_shm_mon_compr = shm_open(SHM_MON_COMPR, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
-    if (fd_shm_mon_compr == -1 && errno == EEXIST) /* SHM YA EXISTE */
+    /* MAPEO DE LA MEMORIA COMPARTIDA DESDE COMPROBADOR */
+    info_shm = mmap(NULL, sizeof(CompleteShMem), PROT_WRITE | PROT_READ, MAP_SHARED, fd_shm_mon_compr, 0);
+    close(fd_shm_mon_compr); /* SE CIERRA EL DESCRIPTOR COMPROBADOR-MONITOR PORQUE YA NO NOS HACE FALTA */
+    if (info_shm == MAP_FAILED)
+    {
+        perror("mmap");
+        shm_unlink(SHM_MON_COMPR);
+        exit(EXIT_FAILURE);
+    }
+
+    /* CREACIÓN E INICIALIZACIÓN DE LOS SEMÁFOROS ANÓNIMOS DE LA MEMORIA COMPARTIDA */
+    if (sem_init(&info_shm->sem_mutex, 1, 1))
+    {
+        munmap(info_shm, sizeof(CompleteShMem));
+        shm_unlink(SHM_MON_COMPR);
+        exit(EXIT_FAILURE);
+    }
+    if (sem_init(&info_shm->sem_empty, 1, BUFF_SIZE))
+    {
+        sem_destroy(&info_shm->sem_mutex);
+        munmap(info_shm, sizeof(CompleteShMem));
+        shm_unlink(SHM_MON_COMPR);
+        exit(EXIT_FAILURE);
+    }
+    if (sem_init(&info_shm->sem_fill, 1, 0))
+    {
+        sem_destroy(&info_shm->sem_mutex);
+        sem_destroy(&info_shm->sem_empty);
+        munmap(info_shm, sizeof(CompleteShMem));
+        shm_unlink(SHM_MON_COMPR);
+        exit(EXIT_FAILURE);
+    }
+
+    /* INICIALIZACIÓN DEL BLOQUE */
+    for (j = 0; j < BUFF_SIZE; j++)
+    {
+        info_shm->data[j].ID = 0;
+        info_shm->data[j].target = INITIAL_TARGET;
+        info_shm->data[j].solution = 0;
+        for (i = 0; i < MAX_MINER; i++)
+        {
+            info_shm->data[j].wallets[i].n_coins = 0;
+            info_shm->data[j].wallets[i].MinersWalletPID = (pid_t)0;
+        }
+        info_shm->data[j].total_n_votes = 0;
+        info_shm->data[j].positive_n_votes = 0;
+    }
+
+    /* INICIALIZACIÓN DE REAR Y FRONT Y FLAG DE CONTROL DE SOLUCIÓN */
+    info_shm->front = info_shm->rear = 0;
+    info_shm->solStatus = 1;
+
+    pid = fork();
+    if (pid < 0)
+    {
+        perror("fork");
+        sem_destroy(&info_shm->sem_mutex);
+        sem_destroy(&info_shm->sem_empty);
+        sem_destroy(&info_shm->sem_fill);
+        munmap(info_shm, sizeof(CompleteShMem));
+        shm_unlink(SHM_MON_COMPR);
+        exit(EXIT_FAILURE);
+    }
+    else if (pid == 0)
     {
         /* MONITOR */
-        sem_post(mutex);
-        fflush(stdout);
-        printf("[%d]\n", getpid());
-
-        /* APERTURA DEL SEGMENTO DE MEMORIA COMPARTIDA DESDE MONITOR */
-        if ((fd_mon = shm_open(SHM_MON_COMPR, O_RDWR , S_IRUSR | S_IWUSR)) == -1)
-        {
-            perror("shm_open");
-            close(fd_shm_mon_compr);
-            shm_unlink( SHM_MON_COMPR );
-            sem_close(mutex);
-            sem_unlink( SEM_NAME_MUTEX );
-            exit(EXIT_FAILURE);
-        }
-
-        /* MAPEO DE LA MEMORIA COMPARTIDA DESDE MONITOR */
-        info_shm = mmap(NULL, sizeof(CompleteShMem), PROT_WRITE | PROT_READ, MAP_SHARED, fd_mon, 0);
-        close(fd_mon); /* SE CIERRA EL DESCRIPTOR MONITOR PORQUE YA NO NOS HACE FALTA */
-        if (info_shm == MAP_FAILED)
-        {
-            perror("mmap");
-            shm_unlink( SHM_MON_COMPR );
-            sem_close(mutex);
-            sem_unlink( SEM_NAME_MUTEX );
-            exit(EXIT_FAILURE);
-        }
-
         while (info_shm->data[info_shm->rear-1].target != -1 && info_shm->data[info_shm->rear-1].solution != -1 /* BLOQUE DE FINALIZACIÓN */)
         {
-            /* CONSUMIDOR */
+             /* CONSUMIDOR */
             sem_wait(&info_shm->sem_fill);
             sem_wait(&info_shm->sem_mutex);
 
             /* MUESTRA POR PANTALLA EL ESTADO DE LA SOLUCIÓN OBTENIDA PARA SU CORRESPONDIENTE TARGET */
             if (info_shm->data[info_shm->rear-1].target != -1 && info_shm->data[info_shm->rear-1].solution != -1)
             {
-                if (info_shm->solutionStatus == 1) printf("Target: %08ld\n Solution: %08ld (validated)\n", 
-                    info_shm->data[info_shm->front].target, info_shm->data[info_shm->front].solution); /* SOLUCIÓN CORRECTA */
-                else printf("Target: %08ld\n Solution: %08ld (rejected)\n", info_shm->data[info_shm->front].target, 
-                    info_shm->data[info_shm->front].solution); /* SOLUCIÓN INCORRECTA */
+                if (info_shm->solStatus == 1) strcpy(solutionInfo, "validated");  /* SOLUCIÓN CORRECTA */
+                else strcpy(solutionInfo, "rejected");                            /* SOLUCIÓN INCORRECTA */
+
+                printf("ID: %d\n", info_shm->data[info_shm->front].ID);
+                printf("Winner: %ld\n", (long) info_shm->data[info_shm->front].FstMiner);
+                printf("Target: %8ld\n", info_shm->data[info_shm->front].target);
+                printf("Solution: %8ld (%s)\n", info_shm->data[info_shm->front].solution, solutionInfo);
+                printf("Votes: %d/%d\n", info_shm->data[info_shm->front].positive_n_votes, info_shm->data[info_shm->front].total_n_votes);
+                i = 0;
+                while(info_shm->data[info_shm->front].wallets[i].MinersWalletPID != (pid_t) 0)
+                {
+                    printf("Wallets: %ld:%ld\n", (long) info_shm->data[info_shm->front].wallets[i].MinersWalletPID, info_shm->data[info_shm->front].wallets[i].n_coins);
+                    i++;
+                }
             }
             
             /* "POP" COLA CIRCULAR MONITOR-COMPROBADOR */
@@ -73,86 +126,14 @@ int main()
             sem_post(&info_shm->sem_empty);
         }
 
-        /* "LIBERACIÓN" DEL MAPEO DE LA MEMORIA DESDE MONITOR */
         munmap(info_shm, sizeof(CompleteShMem));
-
-        fflush(stdout);
-        printf("[%d] Finishing\n", getpid());
-    
-        shm_unlink( SHM_MON_COMPR );
-        sem_close(mutex);
-        sem_unlink( SEM_NAME_MUTEX );
+        shm_unlink(SHM_MON_COMPR);
 
         exit(EXIT_SUCCESS);
     }
-    else if (fd_shm_mon_compr != -1)
+    else
     {
         /* COMPROBADOR */
-        fflush(stdout);
-        printf("[%d] Checking blocks...\n", getpid());
-        sem_post(mutex); /* FIN SECCIÓN CRÍTICA */
-
-        /* REISZE DEL SEGMENTO DE MEMORIA COMPARTIDA */
-        if (ftruncate(fd_shm_mon_compr, sizeof(CompleteShMem)) == -1)
-        {
-            perror("ftruncate");
-            shm_unlink( SHM_MON_COMPR );
-            sem_close(mutex);
-            sem_unlink( SEM_NAME_MUTEX );
-            exit(EXIT_FAILURE);
-        }
-
-        /* MAPEO DE LA MEMORIA COMPARTIDA DESDE COMPROBADOR */
-        info_shm = mmap(NULL, sizeof(CompleteShMem), PROT_WRITE | PROT_READ, MAP_SHARED, fd_shm_mon_compr, 0);
-        close(fd_shm_mon_compr); /* SE CIERRA EL DESCRIPTOR COMPROBADOR-MONITOR PORQUE YA NO NOS HACE FALTA */
-        if (info_shm == MAP_FAILED)
-        {
-            perror("mmap");
-            shm_unlink( SHM_MON_COMPR );
-            sem_close(mutex);
-            sem_unlink( SEM_NAME_MUTEX );
-            exit(EXIT_FAILURE);
-        }
-
-        /* CREACIÓN E INICIALIZACIÓN DE LOS SEMÁFOROS ANÓNIMOS DE LA MEMORIA COMPARTIDA */
-        if (sem_init(&info_shm->sem_mutex, 1, 1))
-        {
-            munmap(info_shm, sizeof(CompleteShMem));
-            shm_unlink( SHM_MON_COMPR );
-            sem_close(mutex);
-            sem_unlink( SEM_NAME_MUTEX );
-            exit(EXIT_FAILURE);
-        }
-        if (sem_init(&info_shm->sem_empty, 1, BUFF_SIZE))
-        {
-            sem_destroy(&info_shm->sem_mutex);
-            munmap(info_shm, sizeof(CompleteShMem));
-            shm_unlink( SHM_MON_COMPR );
-            sem_close(mutex);
-            sem_unlink( SEM_NAME_MUTEX );
-            exit(EXIT_FAILURE);
-        }
-        if (sem_init(&info_shm->sem_fill, 1, 0))
-        {
-            sem_destroy(&info_shm->sem_mutex);
-            sem_destroy(&info_shm->sem_empty);
-            munmap(info_shm, sizeof(CompleteShMem));
-            shm_unlink( SHM_MON_COMPR );
-            sem_close(mutex);
-            sem_unlink( SEM_NAME_MUTEX );
-            exit(EXIT_FAILURE);
-        }
-
-        /* INICIALIZACIÓN DEL TARGET Y SOLUCIÓN DE LA ESTRUCTURA */
-        for(j = 0; j < BUFF_SIZE; j++)
-        {
-            info_shm->data[j].target = 0;
-            info_shm->data[j].solution = 0;
-        }
-        /* INICIALIZACIÓN DE LA FLAG DE CONTROL DE SOLUCIÓN,
-            REAR Y FRONT */
-        info_shm->solutionStatus = 1;
-        info_shm->front = info_shm->rear = 0;
 
         /* APERTURA DE LA MQ MINERO-COMPROBADOR, SI YA EXISTE SE ABRE SOLO PARA LEER */
         mq = mq_open( MQ_NAME , O_CREAT | O_RDONLY, S_IRUSR | S_IWUSR, &attributes);
@@ -163,16 +144,13 @@ int main()
             sem_destroy(&info_shm->sem_fill);
             munmap(info_shm, sizeof(CompleteShMem));
             shm_unlink( SHM_MON_COMPR );
-            sem_close(mutex);
-            sem_unlink( SEM_NAME_MUTEX );
             fprintf(stderr, "Error creating the message queue\n");
             exit(EXIT_FAILURE);
         }
-        
-        /* INICIALIZACIÓN DE LA EdD ShmData ANTES DEL SALTO CONDICIONAL */
+
         recieved_info.target = 0;
         recieved_info.solution = 0;
-        
+
         while(recieved_info.target != -1 && recieved_info.solution != -1 /* BLOQUE FINALIZACION DE LECT/ESCR */)
         {
             /* PRODUCTOR */
@@ -180,15 +158,13 @@ int main()
             sem_wait(&info_shm->sem_mutex);
             
             /* EXTRAER DE LA COLA DE MENSAJES MINERO */
-            if (mq_receive(mq, (char *) &recieved_info, sizeof(ShmData), NULL) == -1)
+            if (mq_receive(mq, (char *) &recieved_info, sizeof(InfoBlock), NULL) == -1)
             {
                 sem_destroy(&info_shm->sem_mutex);
                 sem_destroy(&info_shm->sem_empty);
                 sem_destroy(&info_shm->sem_fill);
                 munmap(info_shm, sizeof(CompleteShMem));
                 shm_unlink( SHM_MON_COMPR );
-                sem_close(mutex);
-                sem_unlink( SEM_NAME_MUTEX );
                 mq_close(mq);
                 mq_unlink( MQ_NAME );
                 fprintf(stderr, "Error recieving from mq\n");
@@ -200,59 +176,29 @@ int main()
             info_shm->data[info_shm->rear].solution = recieved_info.solution;
             
             /* COMPROBAR SOLUCIÓN; CORRECTA = 1, ERRÓNEA = 0 */
-            if (info_shm->data[info_shm->rear].target == pow_hash(info_shm->data[info_shm->rear].solution)) info_shm->solutionStatus = 1;
-            else info_shm->solutionStatus = 0;
+            if (info_shm->data[info_shm->rear].target == pow_hash(info_shm->data[info_shm->rear].solution)) info_shm->solStatus = 1;
+            else info_shm->solStatus = 0;
             
             /* "PUSH" COLA CIRCULAR MONITOR-COMPROBADOR */
             info_shm->rear = (info_shm->rear + 1) % BUFF_SIZE;
 
             sem_post(&info_shm->sem_mutex);
             sem_post(&info_shm->sem_fill);
-            
-            /* ESPERA ACTIVA DE <LAG> MILISEGUNDOS */
-            usleep(lag*1000);
         }
 
         /* LIBERAR LOS SEMÁFOROS ANÓNIMOS DE LA MEMORIA COMPARTIDA */
         sem_destroy(&info_shm->sem_mutex);
         sem_destroy(&info_shm->sem_empty);
         sem_destroy(&info_shm->sem_fill);
-
+        
         /* "LIBERACIÓN" DEL MAPEO DE LA MEMORIA DESDE COMPROBADOR */
         munmap(info_shm, sizeof(CompleteShMem));
 
         /* LIBERACIÓN DE RECURSOS UTILIZADOS POR COMPROBADOR */
-        shm_unlink( SHM_MON_COMPR );
-        sem_close(mutex);
-        sem_unlink( SEM_NAME_MUTEX );
+        shm_unlink(SHM_MON_COMPR);
         mq_close(mq);
-        mq_unlink( MQ_NAME );
+        mq_unlink(MQ_NAME);
 
-        fflush(stdout);
-        printf("[%d] Finishing\n", getpid());
-        
         exit(EXIT_SUCCESS);
     }
-    else
-    {
-        /* CONTROL DE ERRORES AL ABRIR EL SEGMENTO DE MEMORIA COMPARTIDA */
-        sem_close(mutex);
-        sem_unlink( SEM_NAME_MUTEX );
-        perror("Error creating the shared memory segment\n");
-        exit(EXIT_FAILURE);
-    }
-
-    /* NUNCA SE DEBERÍA LLEGAR AQUÍ PERO POR SI HAY FALLOS NO RESPALDADOS SE LIBERAN LOS RECURSOS */
-    sem_destroy(&info_shm->sem_mutex);
-    sem_destroy(&info_shm->sem_empty);
-    sem_destroy(&info_shm->sem_fill);
-    munmap(info_shm, sizeof(CompleteShMem));
-    sem_close(mutex);
-    sem_unlink( SEM_NAME_MUTEX );
-    close(fd_shm_mon_compr);
-    shm_unlink( SHM_MON_COMPR );
-    mq_close(mq);
-    mq_unlink( MQ_NAME );
-
-    exit(EXIT_FAILURE);
 }
