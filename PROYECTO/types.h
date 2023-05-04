@@ -22,6 +22,7 @@
 
 #define MQ_NAME "/mq_minero_comprobador"
 #define MQ_SIZE 10
+#define END_BLOCK -1
 
 typedef struct {
     pid_t MinersWalletPID;  /*!< PID DEL PROPIETARIO DE LA CARTERA */
